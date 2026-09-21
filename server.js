@@ -1,8 +1,11 @@
 const express = require("express");
 const cors = require("cors");
+const { YtDlp } = require("ytdlp-nodejs");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+const ytdlp = new YtDlp();
 
 app.use(cors());
 app.use(express.json());
@@ -26,7 +29,6 @@ app.post("/api/download", async (req, res) => {
     }
 
     let parsedUrl;
-
     try {
       parsedUrl = new URL(url);
     } catch {
@@ -43,101 +45,17 @@ app.post("/api/download", async (req, res) => {
       });
     }
 
-    /*
-      IMPORTANT:
-      This endpoint is intentionally limited to authorized
-      direct media URLs.
+    // ========== YouTube Detection ==========
+    const isYouTube =
+      parsedUrl.hostname.includes("youtube.com") ||
+      parsedUrl.hostname.includes("youtu.be");
 
-      It does NOT extract or bypass protected media streams
-      from platforms such as YouTube.
-    */
-
-    const response = await fetch(url, {
-      redirect: "follow"
-    });
-
-    if (!response.ok) {
-      return res.status(400).json({
-        success: false,
-        message: `Unable to access media file. HTTP ${response.status}`
-      });
+    if (isYouTube) {
+      return await handleYouTubeDownload(url, res);
     }
 
-    const contentType =
-      response.headers.get("content-type") || "";
-
-    const allowedTypes = [
-      "video/mp4",
-      "video/webm",
-      "video/quicktime",
-      "video/x-msvideo"
-    ];
-
-    const isVideo = allowedTypes.some(type =>
-      contentType.toLowerCase().includes(type)
-    );
-
-    if (!isVideo) {
-      return res.status(400).json({
-        success: false,
-        message: "The supplied URL is not an authorized direct video file."
-      });
-    }
-
-    const contentLength =
-      response.headers.get("content-length");
-
-    const MAX_SIZE = 500 * 1024 * 1024; // 500 MB
-
-    if (contentLength && Number(contentLength) > MAX_SIZE) {
-      return res.status(413).json({
-        success: false,
-        message: "Video file is larger than the 500 MB limit."
-      });
-    }
-
-    const extension = getExtension(contentType);
-
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="vidfetch-video.${extension}"`
-    );
-
-    res.setHeader(
-      "Content-Type",
-      contentType
-    );
-
-    if (contentLength) {
-      res.setHeader(
-        "Content-Length",
-        contentLength
-      );
-    }
-
-    /*
-      Stream the authorized media file directly
-      to the user's browser.
-    */
-
-    if (response.body) {
-      const reader = response.body.getReader();
-
-      while (true) {
-        const { done, value } = await reader.read();
-
-        if (done) break;
-
-        res.write(Buffer.from(value));
-      }
-
-      res.end();
-    } else {
-      return res.status(500).json({
-        success: false,
-        message: "Media stream is unavailable."
-      });
-    }
+    // ========== Direct Video File (purana logic) ==========
+    return await handleDirectVideo(url, res);
 
   } catch (error) {
     console.error("Download error:", error);
@@ -145,34 +63,143 @@ app.post("/api/download", async (req, res) => {
     if (!res.headersSent) {
       return res.status(500).json({
         success: false,
-        message: "Server error while downloading the video."
+        message: error.message || "Server error while downloading the video."
       });
     }
-
     res.end();
   }
 });
 
+/* =========================
+   YouTube Download Handler
+========================= */
+async function handleYouTubeDownload(url, res) {
+  try {
+    console.log("YouTube download started:", url);
 
-function getExtension(contentType) {
+    // Video info nikaalo
+    const info = await ytdlp.getInfoAsync(url);
+    const title = (info.title || "vidfetch-video")
+      .replace(/[^\w\s-]/g, "")
+      .replace(/\s+/g, "_")
+      .substring(0, 80);
 
-  const type = contentType.toLowerCase();
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${title}.mp4"`
+    );
+    res.setHeader("Content-Type", "video/mp4");
 
-  if (type.includes("webm")) {
-    return "webm";
+    // Stream download (memory friendly)
+    const stream = ytdlp.stream(url, {
+      format: "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
+      // Agar merge chahiye to ffmpeg chahiye hoga
+    });
+
+    stream.on("error", (err) => {
+      console.error("Stream error:", err);
+      if (!res.headersSent) {
+        res.status(500).json({
+          success: false,
+          message: "Failed to stream YouTube video: " + err.message
+        });
+      }
+    });
+
+    stream.pipe(res);
+
+  } catch (error) {
+    console.error("YouTube error:", error);
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        message: "YouTube download failed: " + (error.message || "Unknown error")
+      });
+    }
   }
-
-  if (type.includes("quicktime")) {
-    return "mov";
-  }
-
-  if (type.includes("x-msvideo")) {
-    return "avi";
-  }
-
-  return "mp4";
 }
 
+/* =========================
+   Direct Video Handler (purana)
+========================= */
+async function handleDirectVideo(url, res) {
+  const response = await fetch(url, {
+    redirect: "follow"
+  });
+
+  if (!response.ok) {
+    return res.status(400).json({
+      success: false,
+      message: `Unable to access media file. HTTP ${response.status}`
+    });
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+
+  const allowedTypes = [
+    "video/mp4",
+    "video/webm",
+    "video/quicktime",
+    "video/x-msvideo"
+  ];
+
+  const isVideo = allowedTypes.some(type =>
+    contentType.toLowerCase().includes(type)
+  );
+
+  if (!isVideo) {
+    return res.status(400).json({
+      success: false,
+      message: "The supplied URL is not an authorized direct video file."
+    });
+  }
+
+  const contentLength = response.headers.get("content-length");
+  const MAX_SIZE = 500 * 1024 * 1024; // 500 MB
+
+  if (contentLength && Number(contentLength) > MAX_SIZE) {
+    return res.status(413).json({
+      success: false,
+      message: "Video file is larger than the 500 MB limit."
+    });
+  }
+
+  const extension = getExtension(contentType);
+
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="vidfetch-video.${extension}"`
+  );
+  res.setHeader("Content-Type", contentType);
+
+  if (contentLength) {
+    res.setHeader("Content-Length", contentLength);
+  }
+
+  if (response.body) {
+    const reader = response.body.getReader();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(Buffer.from(value));
+    }
+    res.end();
+  } else {
+    return res.status(500).json({
+      success: false,
+      message: "Media stream is unavailable."
+    });
+  }
+}
+
+function getExtension(contentType) {
+  const type = contentType.toLowerCase();
+  if (type.includes("webm")) return "webm";
+  if (type.includes("quicktime")) return "mov";
+  if (type.includes("x-msvideo")) return "avi";
+  return "mp4";
+}
 
 app.listen(PORT, () => {
   console.log(`VidFetch backend running on port ${PORT}`);
