@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const { YtDlp } = require("ytdlp-nodejs");
 const path = require("path");
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -45,7 +46,6 @@ app.post("/api/download", async (req, res) => {
       });
     }
 
-    // ========== YouTube Detection ==========
     const isYouTube =
       parsedUrl.hostname.includes("youtube.com") ||
       parsedUrl.hostname.includes("youtu.be");
@@ -54,7 +54,6 @@ app.post("/api/download", async (req, res) => {
       return await handleYouTubeDownload(url, res);
     }
 
-    // ========== Direct Video File (purana logic) ==========
     return await handleDirectVideo(url, res);
 
   } catch (error) {
@@ -70,9 +69,6 @@ app.post("/api/download", async (req, res) => {
   }
 });
 
-/* =========================
-   YouTube Download Handler
-========================= */
 async function handleYouTubeDownload(url, res) {
   try {
     console.log("YouTube download started:", url);
@@ -123,49 +119,7 @@ async function handleYouTubeDownload(url, res) {
     }
   }
 }
-    const title = (info.title || "vidfetch-video")
-      .replace(/[^\w\s-]/g, "")
-      .replace(/\s+/g, "_")
-      .substring(0, 80);
 
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${title}.mp4"`
-    );
-    res.setHeader("Content-Type", "video/mp4");
-
-    // Stream download (memory friendly)
-    const stream = ytdlp.stream(url, {
-  format: "best[ext=mp4]/best",
-  rawArgs: ["--js-runtimes", "node"]
-});
-
-    stream.on("error", (err) => {
-      console.error("Stream error:", err);
-      if (!res.headersSent) {
-        res.status(500).json({
-          success: false,
-          message: "Failed to stream YouTube video: " + err.message
-        });
-      }
-    });
-
-    stream.pipe(res);
-
-  } catch (error) {
-    console.error("YouTube error:", error);
-    if (!res.headersSent) {
-      return res.status(500).json({
-        success: false,
-        message: "YouTube download failed: " + (error.message || "Unknown error")
-      });
-    }
-  }
-}
-
-/* =========================
-   Direct Video Handler (purana)
-========================= */
 async function handleDirectVideo(url, res) {
   const response = await fetch(url, {
     redirect: "follow"
@@ -199,7 +153,7 @@ async function handleDirectVideo(url, res) {
   }
 
   const contentLength = response.headers.get("content-length");
-  const MAX_SIZE = 500 * 1024 * 1024; // 500 MB
+  const MAX_SIZE = 500 * 1024 * 1024;
 
   if (contentLength && Number(contentLength) > MAX_SIZE) {
     return res.status(413).json({
