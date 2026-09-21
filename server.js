@@ -78,7 +78,9 @@ async function handleYouTubeDownload(url, res) {
     console.log("YouTube download started:", url);
 
     // Video info nikaalo
-    const info = await ytdlp.getInfoAsync(url);
+    const info = await ytdlp.getInfoAsync(url, {
+  rawArgs: ["--js-runtimes", "node"]
+});
     const title = (info.title || "vidfetch-video")
       .replace(/[^\w\s-]/g, "")
       .replace(/\s+/g, "_")
@@ -92,9 +94,9 @@ async function handleYouTubeDownload(url, res) {
 
     // Stream download (memory friendly)
     const stream = ytdlp.stream(url, {
-      format: "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
-      // Agar merge chahiye to ffmpeg chahiye hoga
-    });
+  format: "best[ext=mp4]/best",
+  rawArgs: ["--js-runtimes", "node"]
+});
 
     stream.on("error", (err) => {
       console.error("Stream error:", err);
