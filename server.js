@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const { YtDlp } = require("ytdlp-nodejs");
-
+const path = require("path");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -77,10 +77,52 @@ async function handleYouTubeDownload(url, res) {
   try {
     console.log("YouTube download started:", url);
 
-    // Video info nikaalo
+    const cookiesPath = path.join(__dirname, "cookies.txt");
+
     const info = await ytdlp.getInfoAsync(url, {
-  rawArgs: ["--js-runtimes", "node"]
-});
+      jsRuntime: "node",
+      cookies: cookiesPath
+    });
+
+    const title = (info.title || "vidfetch-video")
+      .replace(/[^\w\s-]/g, "")
+      .replace(/\s+/g, "_")
+      .substring(0, 80);
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${title}.mp4"`
+    );
+    res.setHeader("Content-Type", "video/mp4");
+
+    const stream = ytdlp.stream(url, {
+      format: "best[ext=mp4]/best",
+      jsRuntime: "node",
+      cookies: cookiesPath
+    });
+
+    stream.on("error", (err) => {
+      console.error("Stream error:", err);
+      if (!res.headersSent) {
+        res.status(500).json({
+          success: false,
+          message: "Failed to stream YouTube video: " + err.message
+        });
+      }
+    });
+
+    stream.pipe(res);
+
+  } catch (error) {
+    console.error("YouTube error:", error);
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        message: "YouTube download failed: " + (error.message || "Unknown error")
+      });
+    }
+  }
+}
     const title = (info.title || "vidfetch-video")
       .replace(/[^\w\s-]/g, "")
       .replace(/\s+/g, "_")
